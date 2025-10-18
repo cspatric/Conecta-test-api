@@ -10,7 +10,7 @@ services:
       - .env
     volumes:
       - .:/app
-      - ./instance/app.db:/app/instance/app.db
+      - ./instance:/app/instance
     command: >
       sh -c "
         if [ ! -f migrations/env.py ]; then
