@@ -1,0 +1,23 @@
+services:
+  api:
+    container_name: conecta_api
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+      - ./instance/app.db:/app/instance/app.db
+    command: >
+      sh -c "
+        if [ ! -f migrations/env.py ]; then
+          python -m flask --app wsgi:app db init;
+        fi &&
+        python -m flask --app wsgi:app db migrate -m 'autogen' || true &&
+        python -m flask --app wsgi:app db upgrade &&
+        exec gunicorn --bind :8080 --workers 2 --threads 4 --timeout 120 wsgi:app
+      "
+    restart: unless-stopped
