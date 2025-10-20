@@ -1,41 +1,40 @@
-# app/main.py
 import os
 from flask import Flask, jsonify
 from flasgger import Swagger
 from flask_cors import CORS
 from .config import get_config
 from .swagger.base_spec import base_spec
-
+from .extensions import db, migrate
+from .middleware.request_logger import register_request_hooks
+from .models import request_log
 
 def create_app():
     app = Flask(__name__)
     app.config.from_object(get_config())
-
-    # ========= Sessão =========
     app.secret_key = os.getenv("SECRET_KEY", "dev-secret")
 
-    # ========= CORS =========
-    # permite chamadas do front local
+    db.init_app(app)
+    migrate.init_app(app, db)
+    from .models import request_log
+
     FRONT_ORIGINS = [
         "http://localhost:5173",
         "http://localhost:3000",
     ]
     CORS(app, resources={
-        r"/api/*": {"origins": FRONT_ORIGINS, "supports_credentials": True},
+        r"/api/*":  {"origins": FRONT_ORIGINS, "supports_credentials": True},
         r"/auth/*": {"origins": FRONT_ORIGINS, "supports_credentials": True},
     })
 
-    # ========= Permitir HTTPS falso (em dev) =========
     if os.getenv("FLASK_ENV") == "development":
         os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
         app.config.setdefault("SESSION_COOKIE_SAMESITE", "Lax")
         app.config.setdefault("SESSION_COOKIE_SECURE", False)
 
-    # ========= Rotas =========
     from .routes.main import register_routes
     register_routes(app)
+    register_request_hooks(app)
 
-    # ========= Swagger =========
     app.config["SWAGGER"] = {
         "title": "Conecta API - Microsoft Contacts",
         "uiversion": 3,
@@ -57,24 +56,8 @@ def create_app():
     }
     Swagger(app, template=base_spec, config=swagger_config)
 
-    # ========= Healthcheck =========
     @app.get("/api/health")
     def health():
-        """
-        Health check
-        ---
-        tags:
-          - Health
-        responses:
-          200:
-            description: ok
-            schema:
-              type: object
-              properties:
-                status:
-                  type: string
-                  example: ok
-        """
         return jsonify({"status": "ok"})
 
     return app

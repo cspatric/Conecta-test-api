@@ -17,7 +17,6 @@ def login():
         description: Redireciona para a tela de login da Microsoft
     """
     auth_url, oauth_state = build_auth_url()
-    # salva o state para validar no callback (anti-CSRF)
     session["oauth_state"] = oauth_state
     return redirect(auth_url)
 
@@ -52,7 +51,6 @@ def callback():
       400:
         description: Erro de validação/fluxo OAuth
     """
-    # valida state (CSRF)
     sent_state = request.args.get("state")
     saved_state = session.get("oauth_state")
     if not saved_state or sent_state != saved_state:
@@ -62,14 +60,12 @@ def callback():
             "saved_state": saved_state
         }), 400
 
-    # erros do provedor
     if request.args.get("error"):
         return jsonify({
             "error": request.args.get("error"),
             "desc": request.args.get("error_description")
         }), 400
 
-    # troca code por token
     code = request.args.get("code")
     if not code:
         return jsonify({"error": "missing_code"}), 400
@@ -83,28 +79,21 @@ def callback():
     if not access_token:
         return jsonify({"auth_error": token}), 400
 
-    # guarda token MS na sessão (para rotas protegidas por sessão)
     session["ms_token"] = token
-    # opcional: limpa o state
     session.pop("oauth_state", None)
 
-    # pega dados básicos do usuário em /me (útil pro front/Insomnia)
     try:
         me = call_graph("/me", access_token)
     except Exception as e:
-        # se falhar /me, ainda assim devolve o token
         me = {"error_fetching_me": str(e)}
 
-    # resposta simples sem usuário local/JWT:
     return jsonify({
         "ms_access_token": access_token,
         "token": {
-            # devolvo campos úteis pro cliente, ocultando refresh_token por padrão
             "token_type": token.get("token_type"),
             "expires_in": token.get("expires_in"),
             "expires_at": token.get("expires_at"),
-            # descomente se quiser retornar o refresh_token ao cliente:
-            # "refresh_token": token.get("refresh_token"),
+
         },
         "me": me
     })

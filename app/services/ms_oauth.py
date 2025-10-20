@@ -42,15 +42,15 @@ def _oauth_session(state: Optional[str] = None, token: Optional[dict] = None) ->
     return OAuth2Session(
         client_id=CLIENT_ID,
         redirect_uri=REDIRECT_URI,
-        scope=SCOPES,               # define o scope aqui
+        scope=SCOPES,
         state=state,
-        token=token,                # pode incluir access/refresh token se já tiver
+        token=token,
         auto_refresh_url=TOKEN_URL,
         auto_refresh_kwargs={
             "client_id": CLIENT_ID,
             "client_secret": CLIENT_SECRET,
         },
-        token_updater=lambda t: None,  # se quiser, troque por callback que persiste o token
+        token_updater=lambda t: None,
     )
 
 
@@ -62,12 +62,10 @@ def build_auth_url() -> Tuple[str, str]:
     Retorna (auth_url, state) para iniciar o login Microsoft.
     """
     oauth = _oauth_session()
-    # Use APENAS um prompt. "select_account" é o mais amigável.
     auth_url, state = oauth.authorization_url(
         AUTHORIZE_URL,
         prompt="select_account",
-        response_mode="query",   # opcional, pode remover se preferir o default
-        # response_type="code"   # default já é "code"
+        response_mode="query",
     )
     return auth_url, state
 
@@ -160,7 +158,6 @@ def fetch_contacts_grouped_by_domain(access_token: str, top: int = 100) -> Dict[
     Lê contatos pessoais e agrupa por domínio do e-mail.
     Retorna: { "dominio.com": [ { id, displayName, email }, ... ], ... }
     """
-    # traga também o id
     params = {"$select": "id,displayName,emailAddresses", "$top": str(top)}
     data = graph_get("/me/contacts", access_token, params=params)
     values = data.get("value", []) or []

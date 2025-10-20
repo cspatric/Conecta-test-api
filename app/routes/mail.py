@@ -1,4 +1,3 @@
-# app/routes/mail.py
 from __future__ import annotations
 
 from flask import Blueprint, jsonify, request, session
@@ -90,7 +89,6 @@ def send_mail():
 
     try:
         res = graph_send_email(access_token, subject=subject, body_html=body_html, to_recipients=to)
-        # Graph costuma retornar 202/204. Padronizando 202 aqui:
         return jsonify(res), 202
     except Exception as e:
         msg = str(e)
@@ -269,7 +267,7 @@ def get_message_detail(message_id: str):
         "bodyPreview","webLink"
     ]
     if include_body:
-        select_fields.append("body")  # body.content (HTML)
+        select_fields.append("body")
 
     try:
         data = graph_get(
