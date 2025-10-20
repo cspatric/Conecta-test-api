@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import requests
 from typing import Any, Dict, List, Optional, Tuple
@@ -28,8 +30,7 @@ GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 # =========================
 def _oauth_session(state: Optional[str] = None, token: Optional[dict] = None) -> OAuth2Session:
     """
-    Cria uma OAuth2Session configurada para Authorization Code + refresh automático.
-    OBS: Se precisar persistir o token atualizado, troque o token_updater por um callback seu.
+    Cria uma OAuth2Session configurada para Authorization Code + refresh automático (Microsoft).
     """
     if not CLIENT_ID:
         raise RuntimeError("MS_CLIENT_ID não configurado no ambiente.")
@@ -41,15 +42,15 @@ def _oauth_session(state: Optional[str] = None, token: Optional[dict] = None) ->
     return OAuth2Session(
         client_id=CLIENT_ID,
         redirect_uri=REDIRECT_URI,
-        scope=SCOPES,
+        scope=SCOPES,               # define o scope aqui
         state=state,
-        token=token,
+        token=token,                # pode incluir access/refresh token se já tiver
         auto_refresh_url=TOKEN_URL,
         auto_refresh_kwargs={
             "client_id": CLIENT_ID,
             "client_secret": CLIENT_SECRET,
         },
-        token_updater=lambda t: None,
+        token_updater=lambda t: None,  # se quiser, troque por callback que persiste o token
     )
 
 
@@ -58,21 +59,22 @@ def _oauth_session(state: Optional[str] = None, token: Optional[dict] = None) ->
 # =========================
 def build_auth_url() -> Tuple[str, str]:
     """
-    Gera (auth_url, state) para iniciar o login Microsoft.
-    O 'state' deve ser salvo na sessão para validação no callback (CSRF).
+    Retorna (auth_url, state) para iniciar o login Microsoft.
     """
     oauth = _oauth_session()
+    # Use APENAS um prompt. "select_account" é o mais amigável.
     auth_url, state = oauth.authorization_url(
-    AUTHORIZE_URL,
-    prompt="select_account"
-)
+        AUTHORIZE_URL,
+        prompt="select_account",
+        response_mode="query",   # opcional, pode remover se preferir o default
+        # response_type="code"   # default já é "code"
+    )
     return auth_url, state
 
 
 def fetch_token_by_code(code: str, state: Optional[str] = None) -> dict:
     """
-    Troca o 'code' recebido no callback por um token (access_token, refresh_token, etc).
-    Use o MESMO 'state' gerado no authorize.
+    Troca o 'code' do callback por token Microsoft (access_token, refresh_token, etc).
     """
     oauth = _oauth_session(state=state)
     token = oauth.fetch_token(
@@ -109,15 +111,12 @@ def graph_get(endpoint: str, access_token: str, params: Optional[Dict[str, Any]]
 
 def call_graph(endpoint: str, access_token: str, params: Optional[Dict[str, Any]] = None) -> dict:
     """
-    Wrapper compatível com o import usado em auth.py.
+    Conveniência para manter compatibilidade com imports em rotas.
     """
     return graph_get(endpoint, access_token, params)
 
 
 def graph_post(endpoint: str, access_token: str, payload: Optional[dict] = None, params: Optional[dict] = None) -> dict:
-    """
-    POST genérico no Graph.
-    """
     url = f"{GRAPH_BASE}{endpoint}"
     headers = _auth_headers(access_token)
     r = requests.post(url, headers=headers, json=payload or {}, params=params or {})
@@ -128,9 +127,6 @@ def graph_post(endpoint: str, access_token: str, payload: Optional[dict] = None,
 
 
 def graph_patch(endpoint: str, access_token: str, payload: Optional[dict] = None) -> dict:
-    """
-    PATCH genérico no Graph.
-    """
     url = f"{GRAPH_BASE}{endpoint}"
     headers = _auth_headers(access_token)
     r = requests.patch(url, headers=headers, json=payload or {})
@@ -141,9 +137,6 @@ def graph_patch(endpoint: str, access_token: str, payload: Optional[dict] = None
 
 
 def graph_delete(endpoint: str, access_token: str) -> dict:
-    """
-    DELETE genérico no Graph.
-    """
     url = f"{GRAPH_BASE}{endpoint}"
     headers = _auth_headers(access_token)
     r = requests.delete(url, headers=headers)
@@ -152,9 +145,6 @@ def graph_delete(endpoint: str, access_token: str) -> dict:
 
 
 def graph_get_binary(endpoint: str, access_token: str, params: Optional[Dict[str, Any]] = None) -> bytes:
-    """
-    GET que retorna bytes (ex.: /me/photo/$value).
-    """
     url = f"{GRAPH_BASE}{endpoint}"
     headers = {"Authorization": f"Bearer {access_token}"}
     r = requests.get(url, headers=headers, params=params or {}, stream=True)
@@ -163,19 +153,21 @@ def graph_get_binary(endpoint: str, access_token: str, params: Optional[Dict[str
 
 
 # =========================
-# Específicos: Contatos
+# Funcionalidades: Contatos / Email / Perfil
 # =========================
 def fetch_contacts_grouped_by_domain(access_token: str, top: int = 100) -> Dict[str, List[Dict[str, str]]]:
     """
     Lê contatos pessoais e agrupa por domínio do e-mail.
-    Retorna: { "dominio.com": [ { displayName, email }, ... ], ... }
+    Retorna: { "dominio.com": [ { id, displayName, email }, ... ], ... }
     """
-    params = {"$select": "displayName,emailAddresses", "$top": str(top)}
+    # traga também o id
+    params = {"$select": "id,displayName,emailAddresses", "$top": str(top)}
     data = graph_get("/me/contacts", access_token, params=params)
     values = data.get("value", []) or []
 
     grouped: Dict[str, List[Dict[str, str]]] = {}
     for c in values:
+        cid = c.get("id") or ""
         name = c.get("displayName") or ""
         emails = c.get("emailAddresses") or []
         for e in emails:
@@ -183,22 +175,28 @@ def fetch_contacts_grouped_by_domain(access_token: str, top: int = 100) -> Dict[
             if not addr or "@" not in addr:
                 continue
             domain = addr.split("@", 1)[1].lower()
-            grouped.setdefault(domain, []).append({"displayName": name, "email": addr})
+            grouped.setdefault(domain, []).append({
+                "id": cid,
+                "displayName": name,
+                "email": addr
+            })
 
+    # dedup por (id,email) e ordena
     for d in list(grouped.keys()):
         seen = set()
         dedup = []
         for item in grouped[d]:
-            key = item["email"].lower()
+            key = (item["id"], item["email"].lower())
             if key in seen:
                 continue
             seen.add(key)
             dedup.append(item)
-        grouped[d] = sorted(dedup, key=lambda x: (x["displayName"].lower(), x["email"].lower()))
+        grouped[d] = sorted(
+            dedup,
+            key=lambda x: (x["displayName"].lower(), x["email"].lower())
+        )
 
     return dict(sorted(grouped.items(), key=lambda kv: kv[0]))
-
-
 def create_contact(
     access_token: str,
     givenName: str,
@@ -209,7 +207,6 @@ def create_contact(
 ) -> dict:
     """
     Cria um contato pessoal (pasta padrão de contatos do usuário).
-    Campos comuns: givenName, surname, emailAddresses, businessPhones, companyName, jobTitle...
     """
     payload: Dict[str, Any] = {"givenName": givenName}
     if surname:
@@ -226,23 +223,14 @@ def create_contact(
 
 def update_contact(access_token: str, contact_id: str, payload: Dict[str, Any]) -> dict:
     """
-    Atualiza um contato por ID. Exemplo payload:
-    {
-      "givenName": "Novo",
-      "emailAddresses": [{"address": "novo@exemplo.com"}],
-      "jobTitle": "Dev"
-    }
+    Atualiza um contato por ID.
     """
     return graph_patch(f"/me/contacts/{contact_id}", access_token, payload=payload)
 
 
-# =========================
-# Específicos: Email
-# =========================
 def send_email(access_token: str, subject: str, body_html: str, to_recipients: List[str]) -> dict:
     """
     Envia e-mail em nome do usuário autenticado.
-    to_recipients: lista de strings (emails).
     """
     payload = {
         "message": {
@@ -258,15 +246,11 @@ def send_email(access_token: str, subject: str, body_html: str, to_recipients: L
 def list_sent_emails(access_token: str, top: int = 25) -> dict:
     """
     Lista e-mails da pasta Enviados (Sent Items).
-    Retorna um objeto com 'value': [ { id, subject, from, receivedDateTime, toRecipients, ... } ]
     """
     params = {"$top": str(top), "$select": "id,subject,from,receivedDateTime,toRecipients"}
     return graph_get("/me/mailFolders/SentItems/messages", access_token, params=params)
 
 
-# =========================
-# Específicos: Perfil/Foto
-# =========================
 def get_profile(access_token: str) -> dict:
     """
     Retorna dados básicos do usuário autenticado (/me).
@@ -276,7 +260,6 @@ def get_profile(access_token: str) -> dict:
 
 def get_user_photo_bytes(access_token: str) -> bytes:
     """
-    Retorna bytes da foto do usuário em /me/photo/$value.
-    Pode gerar 404 se o usuário não tiver foto.
+    Retorna bytes da foto do usuário em /me/photo/$value).
     """
     return graph_get_binary("/me/photo/$value", access_token)

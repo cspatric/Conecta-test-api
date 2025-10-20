@@ -1,7 +1,6 @@
+from __future__ import annotations
+
 from flask import Blueprint, redirect, request, session, jsonify
-from flask_jwt_extended import create_access_token
-from ..extensions import db
-from ..models.user import User
 from ..services.ms_oauth import build_auth_url, fetch_token_by_code, call_graph
 
 bp = Blueprint("auth", __name__)
@@ -9,7 +8,7 @@ bp = Blueprint("auth", __name__)
 @bp.get("/auth/login")
 def login():
     """
-    Inicia login com Microsoft (OAuth2)
+    Inicia login com Microsoft (OAuth 2.0)
     ---
     tags:
       - Auth (Microsoft)
@@ -18,6 +17,7 @@ def login():
         description: Redireciona para a tela de login da Microsoft
     """
     auth_url, oauth_state = build_auth_url()
+    # salva o state para validar no callback (anti-CSRF)
     session["oauth_state"] = oauth_state
     return redirect(auth_url)
 
@@ -32,38 +32,27 @@ def callback():
     parameters:
       - in: query
         name: code
-        type: string
-        required: false
+        schema: { type: string }
         description: Authorization code retornado pela Microsoft
       - in: query
         name: state
-        type: string
-        required: false
+        schema: { type: string }
         description: Valor de state para validação CSRF
       - in: query
         name: error
-        type: string
-        required: false
+        schema: { type: string }
         description: Código de erro retornado pela Microsoft, se houver
       - in: query
         name: error_description
-        type: string
-        required: false
+        schema: { type: string }
         description: Descrição do erro
     responses:
       200:
-        description: Retorna JWT local e dados do usuário
-        schema:
-          type: object
-          properties:
-            access_token:
-              type: string
-            user:
-              type: object
+        description: Retorna o access_token da Microsoft e os dados do usuário (/me)
       400:
         description: Erro de validação/fluxo OAuth
     """
-
+    # valida state (CSRF)
     sent_state = request.args.get("state")
     saved_state = session.get("oauth_state")
     if not saved_state or sent_state != saved_state:
@@ -73,12 +62,14 @@ def callback():
             "saved_state": saved_state
         }), 400
 
+    # erros do provedor
     if request.args.get("error"):
         return jsonify({
             "error": request.args.get("error"),
             "desc": request.args.get("error_description")
         }), 400
 
+    # troca code por token
     code = request.args.get("code")
     if not code:
         return jsonify({"error": "missing_code"}), 400
@@ -92,32 +83,31 @@ def callback():
     if not access_token:
         return jsonify({"auth_error": token}), 400
 
+    # guarda token MS na sessão (para rotas protegidas por sessão)
     session["ms_token"] = token
+    # opcional: limpa o state
+    session.pop("oauth_state", None)
 
-    me = call_graph("/me", access_token)
-    email = (me.get("mail") or me.get("userPrincipalName") or "").lower()
-    name = me.get("displayName") or ""
-    ms_oid = me.get("id")
+    # pega dados básicos do usuário em /me (útil pro front/Insomnia)
+    try:
+        me = call_graph("/me", access_token)
+    except Exception as e:
+        # se falhar /me, ainda assim devolve o token
+        me = {"error_fetching_me": str(e)}
 
-    if not email:
-        return jsonify({"error": "no_email_from_graph", "me": me}), 400
-
-    user = User.query.filter_by(email=email).first()
-    if not user:
-        user = User(name=name or email.split("@")[0], email=email, ms_oid=ms_oid)
-        db.session.add(user)
-    else:
-        user.name = name or user.name
-        user.ms_oid = ms_oid or user.ms_oid
-
-    db.session.commit()
-
-    jwt_token = create_access_token(
-        identity=user.uuid,
-        additional_claims={"email": user.email, "name": user.name}
-    )
-
-    return jsonify({"access_token": jwt_token, "user": user.to_dict()})
+    # resposta simples sem usuário local/JWT:
+    return jsonify({
+        "ms_access_token": access_token,
+        "token": {
+            # devolvo campos úteis pro cliente, ocultando refresh_token por padrão
+            "token_type": token.get("token_type"),
+            "expires_in": token.get("expires_in"),
+            "expires_at": token.get("expires_at"),
+            # descomente se quiser retornar o refresh_token ao cliente:
+            # "refresh_token": token.get("refresh_token"),
+        },
+        "me": me
+    })
 
 
 @bp.post("/auth/logout")
@@ -130,12 +120,15 @@ def logout():
     responses:
       200:
         description: Sessão limpa
-        schema:
-          type: object
-          properties:
-            ok:
-              type: boolean
-              example: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ok:
+                  type: boolean
+                  example: true
     """
     session.pop("ms_token", None)
+    session.pop("oauth_state", None)
     return jsonify({"ok": True})

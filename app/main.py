@@ -1,31 +1,46 @@
 # app/main.py
+import os
 from flask import Flask, jsonify
 from flasgger import Swagger
-
-from .extensions import db, migrate, cors, jwt
+from flask_cors import CORS
 from .config import get_config
 from .swagger.base_spec import base_spec
+
 
 def create_app():
     app = Flask(__name__)
     app.config.from_object(get_config())
 
-    db.init_app(app)
-    migrate.init_app(app, db)
-    cors(app, resources={r"/api/*": {"origins": "*"}})
-    jwt.init_app(app)
+    # ========= Sessão =========
+    app.secret_key = os.getenv("SECRET_KEY", "dev-secret")
 
-    from .models import user
+    # ========= CORS =========
+    # permite chamadas do front local
+    FRONT_ORIGINS = [
+        "http://localhost:5173",
+        "http://localhost:3000",
+    ]
+    CORS(app, resources={
+        r"/api/*": {"origins": FRONT_ORIGINS, "supports_credentials": True},
+        r"/auth/*": {"origins": FRONT_ORIGINS, "supports_credentials": True},
+    })
 
+    # ========= Permitir HTTPS falso (em dev) =========
+    if os.getenv("FLASK_ENV") == "development":
+        os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
+        app.config.setdefault("SESSION_COOKIE_SAMESITE", "Lax")
+        app.config.setdefault("SESSION_COOKIE_SECURE", False)
+
+    # ========= Rotas =========
     from .routes.main import register_routes
     register_routes(app)
 
+    # ========= Swagger =========
     app.config["SWAGGER"] = {
-        "title": "Meus Contatos MS API",
+        "title": "Conecta API - Microsoft Contacts",
         "uiversion": 3,
         "specs_route": "/api/docs",
     }
-
     swagger_config = {
         "headers": [],
         "specs": [
@@ -40,9 +55,9 @@ def create_app():
         "swagger_ui": True,
         "specs_route": "/api/docs",
     }
-
     Swagger(app, template=base_spec, config=swagger_config)
 
+    # ========= Healthcheck =========
     @app.get("/api/health")
     def health():
         """

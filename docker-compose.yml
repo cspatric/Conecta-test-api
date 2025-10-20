@@ -9,15 +9,11 @@ services:
     env_file:
       - .env
     volumes:
-      - .:/app
-      - ./instance:/app/instance
+      - .:/app            # hot-reload de código em dev (opcional)
+      # - ./instance:/app/instance  # só mantenha se realmente usar essa pasta
     command: >
       sh -c "
-        if [ ! -f migrations/env.py ]; then
-          python -m flask --app wsgi:app db init;
-        fi &&
-        python -m flask --app wsgi:app db migrate -m 'autogen' || true &&
-        python -m flask --app wsgi:app db upgrade &&
+        python -c 'import importlib; importlib.import_module(\"wsgi\")' &&
         exec gunicorn --bind :8080 --workers 2 --threads 4 --timeout 120 wsgi:app
       "
     restart: unless-stopped
