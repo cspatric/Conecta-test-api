@@ -1,11 +1,12 @@
+# app/routes/auth.py
 from __future__ import annotations
 
 from flask import Blueprint, redirect, request, session, jsonify
-from ..services.ms_oauth import build_auth_url, fetch_token_by_code, call_graph
+from app.services.ms_oauth import build_auth_url, fetch_token_by_code, call_graph
 
-bp = Blueprint("auth", __name__)
+bp = Blueprint("auth", __name__)  # prefixo vem do register_routes: /auth
 
-@bp.get("/auth/login")
+@bp.get("/login")
 def login():
     """
     Inicia login com Microsoft (OAuth 2.0)
@@ -21,7 +22,7 @@ def login():
     return redirect(auth_url)
 
 
-@bp.get("/auth/callback")
+@bp.get("/callback")
 def callback():
     """
     Callback do OAuth Microsoft
@@ -93,13 +94,12 @@ def callback():
             "token_type": token.get("token_type"),
             "expires_in": token.get("expires_in"),
             "expires_at": token.get("expires_at"),
-
         },
         "me": me
     })
 
 
-@bp.post("/auth/logout")
+@bp.post("/logout")
 def logout():
     """
     Logout (limpa sessão Microsoft)
