@@ -1,4 +1,3 @@
-# app/routes/mail.py
 from __future__ import annotations
 
 from flask import Blueprint, jsonify, request, session
@@ -6,11 +5,11 @@ from flasgger import swag_from
 
 from app.services.ms_oauth import (
     send_email as graph_send_email,
-    list_sent_emails as graph_list_sent,  # nome padronizado
+    list_sent_emails as graph_list_sent,
     graph_get,
 )
 
-bp = Blueprint("mail", __name__)  # prefixo vem do register_routes (/api/mail)
+bp = Blueprint("mail", __name__)
 
 def _get_ms_access_token_from_request() -> str | None:
     auth_header = request.headers.get("Authorization", "")

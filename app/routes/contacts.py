@@ -1,4 +1,3 @@
-# app/routes/contacts.py
 from __future__ import annotations
 
 from flask import Blueprint, jsonify, request, session
@@ -13,7 +12,6 @@ from app.services.ms_oauth import (
 bp = Blueprint("contacts", __name__)
 
 def _get_ms_access_token_from_request() -> str | None:
-    """Tenta pegar o access_token do header Authorization; se não, da sessão."""
     auth_header = request.headers.get("Authorization", "")
     if auth_header.lower().startswith("bearer "):
         return auth_header.split(" ", 1)[1].strip()
@@ -21,7 +19,7 @@ def _get_ms_access_token_from_request() -> str | None:
     return ms_token.get("access_token")
 
 
-@bp.get("/contacts")
+@bp.get("/")
 @swag_from({
   "summary": "Lista contatos do Microsoft 365 agrupados por domínio",
   "tags": ["Contacts"],
@@ -48,10 +46,6 @@ def _get_ms_access_token_from_request() -> str | None:
   }
 })
 def list_contacts():
-    """
-    Lê contatos do Graph usando Authorization: Bearer <token> (preferência)
-    ou o token salvo em session['ms_token'] (fallback).
-    """
     access_token = _get_ms_access_token_from_request()
     if not access_token:
         return jsonify({
@@ -77,7 +71,7 @@ def list_contacts():
         }), 502
 
 
-@bp.post("/contacts")
+@bp.post("/")
 @swag_from({
   "summary": "Cria um contato na pasta padrão do usuário",
   "tags": ["Contacts"],
@@ -119,17 +113,13 @@ def list_contacts():
     }
   },
   "responses": {
-    "201": {"description": "Contato criado", "content": {"application/json": {}}},
+    "201": {"description": "Contato criado"},
     "400": {"description": "Payload inválido"},
     "401": {"description": "Token ausente ou inválido"},
     "502": {"description": "Falha ao criar no Microsoft Graph"}
   }
 })
 def create_contact():
-    """
-    Cria um contato em /me/contacts (pasta padrão).
-    Requer escopo: Contacts.ReadWrite.
-    """
     access_token = _get_ms_access_token_from_request()
     if not access_token:
         return jsonify({
@@ -171,7 +161,7 @@ def create_contact():
         }), 502
 
 
-@bp.get("/contacts/<contact_id>")
+@bp.get("/<contact_id>")
 @swag_from({
   "summary": "Detalhes de um contato do Microsoft 365",
   "tags": ["Contacts"],
@@ -195,7 +185,7 @@ def create_contact():
       "name": "$select",
       "schema": {"type": "string"},
       "required": False,
-      "description": "Campos a retornar (ex: displayName,emailAddresses,companyName). Se não enviar, uso um conjunto padrão."
+      "description": "Campos a retornar (ex: displayName,emailAddresses,companyName)."
     }
   ],
   "responses": {
@@ -206,10 +196,6 @@ def create_contact():
   }
 })
 def get_contact_details(contact_id: str):
-    """
-    Retorna detalhes do contato /me/contacts/{id}.
-    Usa Authorization: Bearer <token> ou token salvo na sessão.
-    """
     access_token = _get_ms_access_token_from_request()
     if not access_token:
         return jsonify({
@@ -217,7 +203,6 @@ def get_contact_details(contact_id: str):
             "message": "Forneça Authorization: Bearer <MS_ACCESS_TOKEN> ou faça login em /auth/login."
         }), 401
 
-    # Campos padrão bem completos; pode customizar via query $select
     default_select = ",".join([
         "id","displayName","givenName","surname",
         "emailAddresses","businessPhones","homePhones","mobilePhone",
@@ -234,7 +219,6 @@ def get_contact_details(contact_id: str):
             params={"$select": select_param}
         )
         return jsonify(data), 200
-
     except Exception as e:
         msg = str(e)
         if "404" in msg or "Not Found" in msg:
@@ -242,13 +226,11 @@ def get_contact_details(contact_id: str):
                 "error": "not_found",
                 "message": f"Contato {contact_id} não encontrado."
             }), 404
-
         if "401" in msg or "Unauthorized" in msg:
             return jsonify({
                 "error": "ms_token_invalid_or_expired",
                 "message": "Access token Microsoft inválido/expirado. Gere outro em /auth/login."
             }), 401
-
         return jsonify({
             "error": "graph_error",
             "message": "Falha ao consultar o Microsoft Graph.",
