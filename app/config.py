@@ -1,4 +1,5 @@
 import os
+import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -12,11 +13,10 @@ class BaseConfig:
     SQLALCHEMY_DATABASE_URI = os.getenv("DATABASE_URL", DEFAULT_SQLALCHEMY_URI)
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
-    SWAGGER = {
-        "title": "Meus Contatos MS API",
-        "uiversion": 3,
-        "specs_route": "/api/docs",
-    }
+    SWAGGER = {"title": "Meus Contatos MS API", "uiversion": 3, "specs_route": "/api/docs"}
+
+    JWT_SECRET_KEY = os.getenv("JWT_SECRET", "dev-jwt-secret")
+    JWT_ACCESS_TOKEN_EXPIRES = datetime.timedelta(hours=8)
 
 class DevConfig(BaseConfig):
     DEBUG = True
