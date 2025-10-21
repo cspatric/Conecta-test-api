@@ -8,6 +8,13 @@ TOOLS_JSON = """
 {
   "tools": [
     {
+      "action": "chat_reply",
+      "params": {
+        "tone": { "type": "string", "optional": true, "default": "friendly" }
+      },
+      "description": "Responde de forma conversacional sem executar nenhuma ação externa."
+    },
+    {
       "action": "list_contacts",
       "params": {
         "top": { "type": "integer", "optional": true, "default": 100 },
@@ -49,6 +56,14 @@ TOOLS_JSON = """
       "description": "Lista emails enviados."
     },
     {
+      "action": "get_message_detail",
+      "params": {
+        "message_id":   { "type": "string",  "optional": false },
+        "include_body": { "type": "boolean", "optional": true, "default": false }
+      },
+      "description": "Detalhes de um e-mail por ID. Se include_body=true, inclui body HTML."
+    },
+    {
       "action": "send_mail",
       "params": {
         "subject":   { "type": "string",       "optional": false },
@@ -61,49 +76,70 @@ TOOLS_JSON = """
   "output_format": {
     "type": "object",
     "properties": {
-      "action": "string (uma das ações listadas)",
-      "params": "object (parâmetros da ação)",
-      "reason": "string curta explicando o porquê",
-      "confidence": "number 0..1"
-    }
+      "action": "string (uma das ações listadas em tools.action)",
+      "params": "object (parâmetros válidos conforme a ação escolhida)",
+      "reason": "string curta explicando o porquê da escolha",
+      "confidence": "number 0..1 (confiança da escolha)",
+      "message": "string (resposta conversacional para o usuário, no mesmo idioma do pedido)",
+      "message_type": "string (um dos: small_talk, text, contacts_list, contact_detail, email_list, email_detail, email_sent, system, error)"
+    },
+    "required": ["action", "params", "reason", "confidence", "message", "message_type"]
   }
 }
 """
 
 EXAMPLES = """
-Exemplo 1 (listar todos os contatos):
+Exemplo (saudação):
 {
-  "action": "list_contacts",
-  "params": { "top": 100 },
-  "reason": "Usuário pediu todos os contatos",
-  "confidence": 0.86
+  "action": "chat_reply",
+  "params": { "tone": "friendly" },
+  "reason": "Usuário apenas cumprimentou",
+  "confidence": 0.8,
+  "message": "Opa, tudo ótimo por aqui! E você, firme? Posso te ajudar em algo agora?",
+  "message_type": "small_talk"
 }
 
-Exemplo 2 (listar contatos por domínio):
+Exemplo (listar contatos por domínio):
 {
   "action": "list_contacts",
   "params": { "domain": "gmail.com", "top": 100 },
   "reason": "Usuário pediu contatos com domínio gmail.com",
-  "confidence": 0.88
+  "confidence": 0.9,
+  "message": "Beleza! Vou listar seus contatos do domínio gmail.com. Quer filtrar por nome também?",
+  "message_type": "contacts_list"
 }
 
-Exemplo 3 (buscar contato por nome):
+Exemplo (listar inbox):
 {
-  "action": "list_contacts",
-  "params": { "query": "patrick", "top": 100 },
-  "reason": "Usuário quer encontrar Patrick",
-  "confidence": 0.83
+  "action": "list_inbox",
+  "params": { "top": 10 },
+  "reason": "Usuário quer os e-mails mais recentes da Inbox",
+  "confidence": 0.85,
+  "message": "Certo! Vou buscar os 10 e-mails mais recentes da sua caixa de entrada.",
+  "message_type": "email_list"
 }
 
-Exemplo 4 (detalhes de um contato):
+Exemplo (listar enviados):
 {
-  "action": "get_contact",
-  "params": { "contact_id": "AAMkADk...AAA=" },
-  "reason": "Usuário quer detalhes por ID",
-  "confidence": 0.84
+  "action": "list_sent",
+  "params": { "top": 10 },
+  "reason": "Usuário quer os e-mails mais recentes enviados",
+  "confidence": 0.84,
+  "message": "Ok! Vou listar os 10 e-mails mais recentes da pasta Enviados.",
+  "message_type": "email_list"
 }
 
-Exemplo 5 (enviar email):
+Exemplo (detalhe de e-mail):
+{
+  "action": "get_message_detail",
+  "params": { "message_id": "AAMkADk...AAA=", "include_body": true },
+  "reason": "Usuário quer abrir um e-mail específico",
+  "confidence": 0.84,
+  "message": "Abrindo os detalhes dessa mensagem.",
+  "message_type": "email_detail"
+}
+
+Exemplo (enviar email):
 {
   "action": "send_mail",
   "params": {
@@ -112,61 +148,91 @@ Exemplo 5 (enviar email):
     "to": ["alguem@exemplo.com"]
   },
   "reason": "Usuário pediu para enviar um email",
-  "confidence": 0.87
-}
-
-Exemplo 6 (listar inbox):
-{
-  "action": "list_inbox",
-  "params": { "top": 10 },
-  "reason": "Usuário quer os e-mails mais recentes da Inbox",
-  "confidence": 0.82
-}
-
-Exemplo 7 (listar enviados):
-{
-  "action": "list_sent",
-  "params": { "top": 20 },
-  "reason": "Usuário quer ver enviados",
-  "confidence": 0.81
+  "confidence": 0.87,
+  "message": "Show! Preparando o envio com o assunto 'Atualização do projeto'. Quer incluir alguém em cópia?",
+  "message_type": "email_sent"
 }
 """
 
 SYSTEM_INSTRUCTIONS = """
-Você é um planejador de chamadas de API. Dado o pedido do usuário, escolha UMA ação válida e gere APENAS um JSON no formato exigido.
-Regras:
-- Use estritamente uma das ações do catálogo.
-- Preencha somente os parâmetros dessa ação.
-- Não invente campos.
-- Responda apenas com JSON puro (sem markdown, sem ```).
-- Se a intenção não estiver relacionada, ainda assim selecione a ação mais próxima (em geral list_contacts com query), mas mantenha 'confidence' baixo.
+Você é um planejador de chamadas de API + assistente conversacional.
+Responda APENAS com JSON em conformidade com 'output_format' do CATÁLOGO.
+REGRAS:
+- SEMPRE inclua 'message' e 'message_type'.
+- 'message_type' deve ser um dos: small_talk, text, contacts_list, contact_detail, email_list, email_detail, email_sent, system, error.
+- Se o usuário apenas conversar (saudação, agradecimento, papo informal), use a ação 'chat_reply' e 'message_type' = 'small_talk'.
+- Se houver uma ação concreta, escolha a ação correta e escreva 'message' explicando resumidamente o que será feito/feito.
+- Use ESTRITAMENTE os parâmetros definidos na ação escolhida; não invente campos ou chaves fora do catálogo.
+- Responda no MESMO IDIOMA do usuário.
+- Saída: JSON puro (sem markdown, sem cercas de código).
 """
 
 def _strip_code_fences(s: str) -> str:
-    t = s.strip()
-    if t.startswith("```"):
-        t = t.strip("`")
-        if t.startswith("json"):
-            t = t[4:]
-    return t.strip()
+  t = s.strip()
+  if t.startswith("```"):
+      t = t[3:].strip()
+      if t.lower().startswith("json"):
+          t = t[4:].strip()
+      if t.endswith("```"):
+          t = t[:-3].strip()
+  return t
 
 def plan_action(user_prompt: str) -> Dict[str, Any]:
-    prompt = (
-        SYSTEM_INSTRUCTIONS
-        + "\n\nCATÁLOGO DE FERRAMENTAS:\n"
-        + TOOLS_JSON
-        + "\n\nEXEMPLOS:\n"
-        + EXAMPLES
-        + "\n\nPEDIDO DO USUÁRIO:\n"
-        + user_prompt
-        + "\n\nResponda apenas com o JSON no formato do catálogo."
-    )
-    raw = ai_chat(prompt)
-    text = _strip_code_fences(raw)
-    plan = json.loads(text)
+  prompt = (
+      SYSTEM_INSTRUCTIONS
+      + "\n\nCATÁLOGO DE FERRAMENTAS E FORMATO DE SAÍDA:\n"
+      + TOOLS_JSON
+      + "\n\nEXEMPLOS:\n"
+      + EXAMPLES
+      + "\n\nPEDIDO DO USUÁRIO:\n"
+      + user_prompt
+      + "\n\nResponda apenas com o JSON exigido pelo 'output_format'."
+  )
 
-    validation = validate_ai_action(plan, raw)
-    if not validation.get("valid", False):
-        raise ValueError(f"Plano inválido: {validation.get('message','sem detalhes')}")
+  raw = ai_chat(prompt)
+  text = _strip_code_fences(raw)
 
-    return validation["clean"]
+  try:
+      plan = json.loads(text)
+  except json.JSONDecodeError:
+      return {
+          "action": "chat_reply",
+          "params": { "tone": "friendly" },
+          "reason": "Falha ao decodificar JSON do modelo",
+          "confidence": 0.4,
+          "message": "Recebi sua mensagem, mas tive um deslize no parser. Pode repetir em uma frase curta o que você quer que eu faça?",
+          "message_type": "error"
+      }
+
+  validation = validate_ai_action(plan, raw)
+  if not validation.get("valid", False):
+      return {
+          "action": "chat_reply",
+          "params": { "tone": "friendly" },
+          "reason": f"Plano inválido: {validation.get('message','sem detalhes')}",
+          "confidence": 0.4,
+          "message": "Beleza, mas algo não bateu aqui no plano. Quer me dizer de novo o que precisa, tipo: 'listar inbox 10 últimos'?",
+          "message_type": "error"
+      }
+
+  clean = validation["clean"]
+
+  if not isinstance(clean.get("message"), str) or not clean["message"].strip():
+      clean["message"] = "Tudo certo! Vou executar essa ação. Se quiser ajustar algum parâmetro, me fala."
+  if clean.get("message_type") not in {
+      "small_talk","text","contacts_list","contact_detail",
+      "email_list","email_detail","email_sent","system","error"
+  }:
+      mapping = {
+          "chat_reply": "text",
+          "list_contacts": "contacts_list",
+          "get_contact": "contact_detail",
+          "create_contact": "contact_detail",
+          "list_inbox": "email_list",
+          "list_sent": "email_list",
+          "get_message_detail": "email_detail",
+          "send_mail": "email_sent"
+      }
+      clean["message_type"] = mapping.get(clean.get("action","chat_reply"), "text")
+
+  return clean

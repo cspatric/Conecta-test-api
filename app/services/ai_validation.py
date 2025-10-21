@@ -1,7 +1,13 @@
 from __future__ import annotations
 from typing import Any, Dict, Tuple, List
 
+# ============ AÇÕES SUPORTADAS ============
 TOOL_SPEC: Dict[str, Dict[str, Any]] = {
+    "chat_reply": {
+        "params": {
+            "tone": {"type": "string", "optional": True, "default": "friendly"}
+        }
+    },
     "list_contacts": {
         "params": {
             "top":   {"type": "integer", "optional": True,  "default": 100, "min": 1, "max": 999},
@@ -33,6 +39,13 @@ TOOL_SPEC: Dict[str, Dict[str, Any]] = {
             "top": {"type": "integer", "optional": True, "default": 25, "min": 1, "max": 100}
         }
     },
+    # ===== NOVO: detalhe da mensagem (abrir um e-mail) =====
+    "get_message_detail": {
+        "params": {
+            "message_id":   {"type": "string",  "optional": False},
+            "include_body": {"type": "boolean", "optional": True, "default": False}
+        }
+    },
     "send_mail": {
         "params": {
             "subject":   {"type": "string",       "optional": False},
@@ -40,6 +53,14 @@ TOOL_SPEC: Dict[str, Dict[str, Any]] = {
             "to":        {"type": "array_string", "optional": False}
         }
     }
+}
+
+# ============ TIPAGEM DA MENSAGEM PARA O FRONT ============
+MESSAGE_TYPE_ENUM = {
+    "small_talk", "text",
+    "contacts_list", "contact_detail",
+    "email_list", "email_detail", "email_sent",
+    "system", "error",
 }
 
 OFFENSIVE_TERMS = {
@@ -57,10 +78,12 @@ def _contains_offensive(text: str) -> bool:
 
 def _type_check(name: str, spec: Dict[str, Any], value: Any) -> Tuple[bool, str, Any]:
     t = spec.get("type")
+
     if t == "string":
         if not isinstance(value, str):
             return False, f"param '{name}' deve ser string", None
         return True, "", value.strip()
+
     if t == "integer":
         if isinstance(value, bool):
             return False, f"param '{name}' deve ser inteiro (não boolean)", None
@@ -77,14 +100,28 @@ def _type_check(name: str, spec: Dict[str, Any], value: Any) -> Tuple[bool, str,
         if max_v is not None and v > max_v:
             return False, f"param '{name}' máximo é {max_v}", None
         return True, "", v
+
     if t == "array_string":
         if not isinstance(value, list) or not all(isinstance(x, str) for x in value):
             return False, f"param '{name}' deve ser array de strings", None
         return True, "", [x.strip() for x in value]
+
     if t == "object":
         if not isinstance(value, dict):
             return False, f"param '{name}' deve ser objeto", None
         return True, "", value
+
+    if t == "boolean":
+        if isinstance(value, bool):
+            return True, "", value
+        if isinstance(value, str):
+            s = value.strip().lower()
+            if s in {"true","1","yes","y"}:
+                return True, "", True
+            if s in {"false","0","no","n"}:
+                return True, "", False
+        return False, f"param '{name}' deve ser boolean", None
+
     return False, f"tipo '{t}' inválido na spec do param '{name}'", None
 
 def validate_ai_action(plan: Dict[str, Any], raw_model_text: str) -> Dict[str, Any]:
@@ -99,8 +136,16 @@ def validate_ai_action(plan: Dict[str, Any], raw_model_text: str) -> Dict[str, A
     if not isinstance(params, dict):
         return {"valid": False, "message": "Campo 'params' deve ser um objeto.", "clean": None}
 
-    spec = TOOL_SPEC[action]["params"]
+    message = plan.get("message")
+    if not isinstance(message, str) or not message.strip():
+        return {"valid": False, "message": "Campo 'message' é obrigatório e deve ser string não vazia.", "clean": None}
 
+    message_type = plan.get("message_type")
+    if not isinstance(message_type, str) or message_type.strip() not in MESSAGE_TYPE_ENUM:
+        return {"valid": False, "message": f"message_type inválido (use um de {sorted(MESSAGE_TYPE_ENUM)}).", "clean": None}
+    message_type = message_type.strip()
+
+    spec = TOOL_SPEC[action]["params"]
     clean: Dict[str, Any] = {}
     for name, p_spec in spec.items():
         if name in params:
@@ -124,6 +169,9 @@ def validate_ai_action(plan: Dict[str, Any], raw_model_text: str) -> Dict[str, A
         if _contains_offensive(clean.get("subject", "")) or _contains_offensive(clean.get("body_html", "")):
             return {"valid": False, "message": "Conteúdo ofensivo/explicitamente inadequado detectado no e-mail.", "clean": None}
 
+    if _contains_offensive(message):
+        return {"valid": False, "message": "Conteúdo ofensivo/inadequado não é permitido na mensagem.", "clean": None}
+
     forbidden_markers = ["create table", "drop table", "curl ", " wget ", " rm -rf "]
     raw_lower = (raw_model_text or "").lower()
     if any(m in raw_lower for m in forbidden_markers):
@@ -142,6 +190,8 @@ def validate_ai_action(plan: Dict[str, Any], raw_model_text: str) -> Dict[str, A
         "action": action,
         "params": clean,
         "reason": reason.strip() if isinstance(reason, str) else "",
-        "confidence": float(confidence) if isinstance(confidence, (int, float)) else 0.0
+        "confidence": float(confidence) if isinstance(confidence, (int, float)) else 0.0,
+        "message": message.strip(),
+        "message_type": message_type
     }
     return {"valid": True, "message": "ok", "clean": cleaned_plan}

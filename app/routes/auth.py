@@ -1,10 +1,9 @@
-# app/routes/auth.py
 from __future__ import annotations
 
 from flask import Blueprint, redirect, request, session, jsonify
 from app.services.ms_oauth import build_auth_url, fetch_token_by_code, call_graph
 
-bp = Blueprint("auth", __name__)  # prefixo vem do register_routes: /auth
+bp = Blueprint("auth", __name__)
 
 @bp.get("/login")
 def login():
@@ -24,80 +23,59 @@ def login():
 
 @bp.get("/callback")
 def callback():
-    """
-    Callback do OAuth Microsoft
-    ---
-    tags:
-      - Auth (Microsoft)
-    parameters:
-      - in: query
-        name: code
-        schema: { type: string }
-        description: Authorization code retornado pela Microsoft
-      - in: query
-        name: state
-        schema: { type: string }
-        description: Valor de state para validação CSRF
-      - in: query
-        name: error
-        schema: { type: string }
-        description: Código de erro retornado pela Microsoft, se houver
-      - in: query
-        name: error_description
-        schema: { type: string }
-        description: Descrição do erro
-    responses:
-      200:
-        description: Retorna o access_token da Microsoft e os dados do usuário (/me)
-      400:
-        description: Erro de validação/fluxo OAuth
-    """
+    import json, base64, urllib.parse 
+
     sent_state = request.args.get("state")
     saved_state = session.get("oauth_state")
     if not saved_state or sent_state != saved_state:
-        return jsonify({
-            "error": "invalid_state",
-            "sent_state": sent_state,
-            "saved_state": saved_state
-        }), 400
+        return redirect("http://localhost:5173/login?err=state")
 
     if request.args.get("error"):
-        return jsonify({
-            "error": request.args.get("error"),
-            "desc": request.args.get("error_description")
-        }), 400
+        e = request.args.get("error")
+        d = request.args.get("error_description", "")
+        return redirect(f"http://localhost:5173/login?err={e}&desc={d}")
 
     code = request.args.get("code")
     if not code:
-        return jsonify({"error": "missing_code"}), 400
+        return redirect("http://localhost:5173/login?err=missing_code")
 
     try:
         token = fetch_token_by_code(code, saved_state)
     except Exception as e:
-        return jsonify({"error": "token_exchange_failed", "exc": str(e)}), 400
+        return redirect(f"http://localhost:5173/login?err=token_exchange_failed&desc={e}")
 
     access_token = token.get("access_token")
     if not access_token:
-        return jsonify({"auth_error": token}), 400
+        return redirect("http://localhost:5173/login?err=no_access_token")
 
-    session["ms_token"] = token
     session.pop("oauth_state", None)
+    session["ms_token"] = token
 
     try:
         me = call_graph("/me", access_token)
     except Exception as e:
         me = {"error_fetching_me": str(e)}
 
-    return jsonify({
+    session["user"] = {
+        "id": me.get("id"),
+        "displayName": me.get("displayName"),
+        "userPrincipalName": me.get("userPrincipalName"),
+        "mail": me.get("mail"),
+    }
+
+    payload = {
         "ms_access_token": access_token,
         "token": {
             "token_type": token.get("token_type"),
             "expires_in": token.get("expires_in"),
             "expires_at": token.get("expires_at"),
         },
-        "me": me
-    })
+        "me": me,
+    }
 
+    b64 = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
+
+    return redirect(f"http://localhost:5173/home#session={urllib.parse.quote(b64)}", code=302)
 
 @bp.post("/logout")
 def logout():

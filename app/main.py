@@ -8,6 +8,7 @@ from .extensions import db, migrate
 from .middleware.request_logger import register_request_hooks
 from .models import request_log
 
+
 def create_app():
     app = Flask(__name__)
     app.config.from_object(get_config())
@@ -15,16 +16,22 @@ def create_app():
 
     db.init_app(app)
     migrate.init_app(app, db)
-    from .models import request_log
 
     FRONT_ORIGINS = [
         "http://localhost:5173",
+        "http://127.0.0.1:5173",
         "http://localhost:3000",
+        "http://127.0.0.1:3000",
     ]
-    CORS(app, resources={
-        r"/api/*":  {"origins": FRONT_ORIGINS, "supports_credentials": True},
-        r"/auth/*": {"origins": FRONT_ORIGINS, "supports_credentials": True},
-    })
+
+    CORS(
+        app,
+        supports_credentials=True,
+        resources={r"/*": {"origins": FRONT_ORIGINS}},
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization"],
+        expose_headers=["Content-Type", "Authorization"],
+    )
 
     if os.getenv("FLASK_ENV") == "development":
         os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
@@ -40,6 +47,7 @@ def create_app():
         "uiversion": 3,
         "specs_route": "/api/docs",
     }
+
     swagger_config = {
         "headers": [],
         "specs": [
